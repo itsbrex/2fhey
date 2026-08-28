@@ -1,447 +1,51 @@
 //
 //  MessageManager.swift
-//  ohtipi
+//  2FHey
 //
-//  Created by Drew Pomerleau on 4/22/22.
+//  Watches the iMessage database (chat.db) for new messages and publishes any
+//  that contain a one-time code.
 //
 
 import Foundation
+import Combine
 import SQLite
 
-typealias MessageWithParsedOTP = (Message, ParsedOTP)
 typealias Expression = SQLite.Expression
 
-class MessageManager: ObservableObject {
+class MessageManager: ObservableObject, MessageSource {
     @Published var messages: [MessageWithParsedOTP] = []
+    var messagesPublisher: AnyPublisher<[MessageWithParsedOTP], Never> { $messages.eraseToAnyPublisher() }
 
+    private let otpParser: OTPParser
     private var processedGuids: Set<String> = []
-    private var lastProcessedRowId: Int = 0
+    private var lastProcessedRowId = 0
 
-    var otpParser: OTPParser
     private var walFileMonitor: DispatchSourceFileSystemObject?
-    private var walFileDescriptor: Int32 = -1
     private var syncWorkItem: DispatchWorkItem?
-    private let syncDebounceInterval: TimeInterval = 0.3 // Wait 0.3 seconds to batch rapid writes while staying responsive
+    private let syncDebounceInterval: TimeInterval = 0.3
+
+    private var databaseURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db")
+    }
 
     init(withOTPParser otpParser: OTPParser) {
         self.otpParser = otpParser
     }
-    
-    private func timeOffsetForDate(_ date: Date) -> Int {
-        var appleOffsetForDate = Int(date.timeIntervalSinceReferenceDate)
 
-        // macOS 26 (Tahoe) and later use a different timestamp format
-        if #available(macOS 26.0, *) {
-            // For macOS 26+, Messages database uses nanosecond precision with different epoch
-            let factor = Int(pow(10.0, 9))
-            appleOffsetForDate *= factor
-        } else if #available(macOS 10.13, *) {
-            let factor = Int(pow(10.0, 9))
-            appleOffsetForDate *= factor
-        }
-
-        return appleOffsetForDate
+    deinit {
+        syncWorkItem?.cancel()
+        stopListening()
     }
 
-    // Parse attributedBody to extract text content
-    // In macOS 26 (Tahoe), message.text is often NULL and the content is in attributedBody
-    private func parseAttributedBody(_ attributedBody: Data?) -> String? {
-        guard let data = attributedBody else { return nil }
-
-        DebugLogger.shared.log("Attempting Method 1: NSKeyedUnarchiver with NSAttributedString", category: "PARSING")
-        // Method 1: Try to unarchive as NSAttributedString (proper way)
-        do {
-            if let attributedString = try NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data) {
-                let text = attributedString.string
-                DebugLogger.shared.log("✅ Method 1 SUCCESS: NSAttributedString unarchived", category: "PARSING", data: ["text_length": text.count, "text_preview": String(text.prefix(100))])
-                return text.isEmpty ? nil : text
-            } else {
-                DebugLogger.shared.log("❌ Method 1 FAIL: Unarchived object is nil", category: "PARSING")
-            }
-        } catch {
-            DebugLogger.shared.log("❌ Method 1 FAIL: NSKeyedUnarchiver error", category: "PARSING", data: ["error": String(describing: error)])
-        }
-
-        DebugLogger.shared.log("Attempting Method 2: Legacy NSKeyedUnarchiver", category: "PARSING")
-        // Method 2: Try legacy unarchiver
-        do {
-            if let attributedString = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSAttributedString {
-                let text = attributedString.string
-                DebugLogger.shared.log("✅ Method 2 SUCCESS: Legacy unarchiver worked", category: "PARSING", data: ["text_length": text.count, "text_preview": String(text.prefix(100))])
-                return text.isEmpty ? nil : text
-            } else {
-                DebugLogger.shared.log("❌ Method 2 FAIL: Object is not NSAttributedString", category: "PARSING")
-            }
-        } catch {
-            DebugLogger.shared.log("❌ Method 2 FAIL: Legacy unarchiver error", category: "PARSING", data: ["error": String(describing: error)])
-        }
-
-        DebugLogger.shared.log("Attempting Method 3: StreamTyped/PropertyList decoding", category: "PARSING")
-        // Method 3: Try to decode as streamtyped (iOS/macOS format)
-        if let decodedString = decodeStreamTypedData(data) {
-            DebugLogger.shared.log("✅ Method 3 SUCCESS: StreamTyped data decoded", category: "PARSING", data: ["text_length": decodedString.count, "text_preview": String(decodedString.prefix(100))])
-            return decodedString
-        } else {
-            DebugLogger.shared.log("❌ Method 3 FAIL: StreamTyped decoding returned nil", category: "PARSING")
-        }
-
-        DebugLogger.shared.log("Attempting Method 4: String scanning (Raycast method)", category: "PARSING")
-        // Method 4: String scanning - this is the method that works in Raycast
-        // attributedBody contains readable text with junk characters around it
-        // Pattern: ...junk...NSString[8 chars][ACTUAL MESSAGE][10 chars before]NSDictionary...junk...
-
-        // Try LOSSY UTF-8 conversion first - allows invalid UTF-8 bytes
-        var bodyString = String(data: data, encoding: .utf8)
-
-        if bodyString == nil {
-            DebugLogger.shared.log("UTF-8 failed, trying lossy ASCII", category: "PARSING")
-            // Try ASCII with lossy conversion - replaces invalid chars with �
-            bodyString = String(decoding: data, as: UTF8.self)
-        }
-
-        guard var unwrappedBodyString = bodyString else {
-            DebugLogger.shared.log("❌ Method 4 FAIL: All string conversions failed", category: "PARSING")
-            return nil
-        }
-
-        DebugLogger.shared.log("String conversion succeeded, searching for NSString marker", category: "PARSING", data: ["string_length": unwrappedBodyString.count, "preview": String(unwrappedBodyString.prefix(100))])
-
-        guard let nsStringRange = unwrappedBodyString.range(of: "NSString") else {
-            DebugLogger.shared.log("❌ Method 4 FAIL: No NSString marker found", category: "PARSING")
-            return nil
-        }
-
-        DebugLogger.shared.log("Found NSString marker, extracting text", category: "PARSING")
-
-        // Skip 8 characters after "NSString"
-        let startIndex = unwrappedBodyString.index(nsStringRange.upperBound, offsetBy: 8, limitedBy: unwrappedBodyString.endIndex) ?? unwrappedBodyString.endIndex
-        unwrappedBodyString = String(unwrappedBodyString[startIndex...])
-
-        DebugLogger.shared.log("After NSString skip", category: "PARSING", data: ["remaining_length": unwrappedBodyString.count, "preview": String(unwrappedBodyString.prefix(100))])
-
-        // Look for "NSDictionary" and extract text before it (minus 10 characters)
-        if let nsDictionaryRange = unwrappedBodyString.range(of: "NSDictionary") {
-            let endIndex = unwrappedBodyString.index(nsDictionaryRange.lowerBound, offsetBy: -10, limitedBy: unwrappedBodyString.startIndex) ?? nsDictionaryRange.lowerBound
-            unwrappedBodyString = String(unwrappedBodyString[..<endIndex])
-            DebugLogger.shared.log("Found NSDictionary marker, extracted text", category: "PARSING", data: ["extracted_length": unwrappedBodyString.count])
-        } else {
-            DebugLogger.shared.log("No NSDictionary marker found, using all remaining text", category: "PARSING")
-        }
-
-        let cleanedText = unwrappedBodyString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanedText.isEmpty {
-            DebugLogger.shared.log("✅ Method 4 SUCCESS: String scanning worked", category: "PARSING", data: ["text_length": cleanedText.count, "text": cleanedText])
-            return cleanedText
-        } else {
-            DebugLogger.shared.log("❌ Method 4 FAIL: Cleaned text is empty after trimming", category: "PARSING")
-            return nil
-        }
-
-        DebugLogger.shared.log("❌ ALL METHODS FAILED for attributedBody", category: "PARSING", data: ["data_length": data.count, "data_hex_preview": data.prefix(50).map { String(format: "%02x", $0) }.joined()])
-        return nil
-    }
-
-    // Attempt to decode streamtyped data format used by iMessage
-    private func decodeStreamTypedData(_ data: Data) -> String? {
-        // Try reading as property list
-        if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) {
-            // The plist might contain the string in various formats
-            if let string = plist as? String {
-                return string
-            }
-            if let dict = plist as? [String: Any], let string = dict["NSString"] as? String {
-                return string
-            }
-            if let dict = plist as? [String: Any], let string = dict["string"] as? String {
-                return string
-            }
-        }
-
-        return nil
-    }
-    
-    private func loadMessagesAfterDate(_ date: Date) throws -> [Message] {
-        DebugLogger.shared.log("Starting loadMessagesAfterDate", category: "DATABASE", data: ["date": date, "macOS_version": ProcessInfo.processInfo.operatingSystemVersionString])
-
-        var homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        homeDirectory.appendPathComponent("/Library/Messages/chat.db")
-
-        DebugLogger.shared.log("Database path", category: "DATABASE", data: ["path": homeDirectory.path])
-
-        let db = try Connection(homeDirectory.absoluteString)
-        DebugLogger.shared.log("Successfully connected to database", category: "DATABASE")
-        
-        let textColumn = Expression<String?>("text")
-        let attributedBodyColumn = Expression<Data?>("attributedBody")
-        let guidColumn = Expression<String>("guid")
-        let cacheRoomnamesColumn = Expression<String?>("cache_roomnames")
-        let fromMeColumn = Expression<Bool>("is_from_me")
-        let dateColumn = Expression<Int>("date")
-        let serviceColumn = Expression<String>("service")
-        
-        let ROWID = Expression<Int>("ROWID")
-
-        let handleTable = Table("handle")
-        let handleFrom = handleTable[Expression<String?>("id")]
-        let messageTable = Table("message")
-        let messageHandleId = messageTable[Expression<Int>("handle_id")]
-        
-        // For macOS 26+, we need to handle the database query differently
-        let query: QueryType
-        let isMacOS26 = if #available(macOS 26.0, *) { true } else { false }
-
-        DebugLogger.shared.log("Building query", category: "DATABASE", data: ["macOS_26_or_later": isMacOS26, "timeOffset": timeOffsetForDate(date)])
-
-        if #available(macOS 26.0, *) {
-            // macOS 26 (Tahoe) may have changed the database schema or date handling
-            // Use a more flexible date comparison and include both SMS and iMessage
-            // Include attributedBody for when text is NULL
-            query = messageTable
-                .select(messageTable[guidColumn], messageTable[fromMeColumn], messageTable[textColumn], messageTable[attributedBodyColumn], messageTable[cacheRoomnamesColumn], messageTable[dateColumn], handleFrom, messageTable[serviceColumn])
-                .join(.leftOuter, handleTable, on: messageHandleId == handleTable[ROWID])
-                .where(messageTable[dateColumn] > timeOffsetForDate(date))
-                .order(messageTable[dateColumn].desc)
-                .limit(1000)  // Limit results for performance
-            DebugLogger.shared.log("Using macOS 26+ query path", category: "DATABASE")
-        } else {
-            query = messageTable
-                .select(messageTable[guidColumn], messageTable[fromMeColumn], messageTable[textColumn], messageTable[attributedBodyColumn], messageTable[cacheRoomnamesColumn], messageTable[dateColumn], handleFrom, messageTable[serviceColumn])
-                .join(.leftOuter, handleTable, on: messageHandleId == handleTable[ROWID])
-                .where(messageTable[dateColumn] > timeOffsetForDate(date))  // Removed SMS filter to include iMessage
-                .order(messageTable[dateColumn].asc)
-            DebugLogger.shared.log("Using pre-macOS 26 query path", category: "DATABASE")
-        }
-
-        let mapRowIterator = try db.prepareRowIterator(query)
-        DebugLogger.shared.log("Executing query and iterating results", category: "DATABASE")
-
-        var rowCount = 0
-        var messagesWithText = 0
-        var messagesWithAttributedBody = 0
-        var messagesParsedFromAttributedBody = 0
-        var messagesSkipped = 0
-
-        let messages = try mapRowIterator.map { messageRow -> Message? in
-            rowCount += 1
-            let guid = messageRow[guidColumn]
-
-            // Get handle first - required field
-            guard let handle = messageRow[handleFrom] else {
-                DebugLogger.shared.log("Row \(rowCount): Skipped - no handle", category: "PARSING", data: ["guid": guid])
-                messagesSkipped += 1
-                return nil
-            }
-
-            // Try to get text, fallback to parsing attributedBody if text is NULL
-            let text: String?
-            let usedAttributedBody: Bool
-            if let directText = messageRow[textColumn] {
-                text = directText
-                usedAttributedBody = false
-                messagesWithText += 1
-                DebugLogger.shared.log("Row \(rowCount): Has direct text", category: "PARSING", data: ["guid": guid, "text_length": directText.count, "text_preview": String(directText.prefix(50))])
-            } else {
-                // For macOS 26 (Tahoe), text may be NULL and content is in attributedBody
-                messagesWithAttributedBody += 1
-                let attributedBodyData = messageRow[attributedBodyColumn]
-                DebugLogger.shared.logAttributedBody(attributedBodyData, messageGuid: guid)
-
-                text = parseAttributedBody(attributedBodyData)
-                usedAttributedBody = true
-
-                if text != nil {
-                    messagesParsedFromAttributedBody += 1
-                }
-
-                DebugLogger.shared.logMessageParse(guid: guid, text: nil, attributedBodyUsed: true, parsedText: text)
-            }
-
-            // If we couldn't get text from either source, skip this message
-            guard let messageText = text else {
-                DebugLogger.shared.log("Row \(rowCount): Skipped - no text available", category: "PARSING", data: ["guid": guid])
-                messagesSkipped += 1
-                return nil
-            }
-
-            return Message(
-                rowId: messageRow[ROWID],
-                guid: messageRow[guidColumn],
-                text: messageText,
-                handle: handle,
-                group: messageRow[cacheRoomnamesColumn],
-                fromMe: messageRow[fromMeColumn])
-        }
-
-        let finalMessages = messages.compactMap { $0 }
-
-        DebugLogger.shared.log("Query complete", category: "DATABASE", data: [
-            "total_rows": rowCount,
-            "messages_with_direct_text": messagesWithText,
-            "messages_with_null_text": messagesWithAttributedBody,
-            "successfully_parsed_from_attributedBody": messagesParsedFromAttributedBody,
-            "messages_skipped": messagesSkipped,
-            "final_message_count": finalMessages.count
-        ])
-
-        return finalMessages
-    }
-
-    private func loadMessagesAfterRowId(_ rowId: Int) throws -> [Message] {
-        DebugLogger.shared.log("Starting loadMessagesAfterRowId", category: "DATABASE", data: ["rowId": rowId, "macOS_version": ProcessInfo.processInfo.operatingSystemVersionString])
-
-        var homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        homeDirectory.appendPathComponent("/Library/Messages/chat.db")
-
-        let db = try Connection(homeDirectory.absoluteString)
-
-        let textColumn = Expression<String?>("text")
-        let attributedBodyColumn = Expression<Data?>("attributedBody")
-        let guidColumn = Expression<String>("guid")
-        let cacheRoomnamesColumn = Expression<String?>("cache_roomnames")
-        let fromMeColumn = Expression<Bool>("is_from_me")
-        let ROWID = Expression<Int>("ROWID")
-
-        let handleTable = Table("handle")
-        let handleFrom = handleTable[Expression<String?>("id")]
-        let messageTable = Table("message")
-        let messageHandleId = messageTable[Expression<Int>("handle_id")]
-
-        // Query for messages with ROWID > lastProcessedRowId
-        // This is much more efficient than date-based queries and ignores typing indicators
-        let query = messageTable
-            .select(messageTable[guidColumn], messageTable[fromMeColumn], messageTable[textColumn], messageTable[attributedBodyColumn], messageTable[cacheRoomnamesColumn], messageTable[ROWID], handleFrom)
-            .join(.leftOuter, handleTable, on: messageHandleId == handleTable[ROWID])
-            .where(messageTable[ROWID] > rowId)
-            .order(messageTable[ROWID].asc)
-            .limit(100)  // Limit for safety
-
-        let mapRowIterator = try db.prepareRowIterator(query)
-        DebugLogger.shared.log("Executing ROWID-based query", category: "DATABASE", data: ["rowId_threshold": rowId])
-
-        var rowCount = 0
-        let messages = try mapRowIterator.map { messageRow -> Message? in
-            rowCount += 1
-            let guid = messageRow[guidColumn]
-
-            guard let handle = messageRow[handleFrom] else {
-                DebugLogger.shared.log("Skipped - no handle", category: "PARSING", data: ["guid": guid])
-                return nil
-            }
-
-            // Try to get text, fallback to parsing attributedBody if text is NULL
-            let text: String?
-            if let directText = messageRow[textColumn] {
-                text = directText
-            } else {
-                text = parseAttributedBody(messageRow[attributedBodyColumn])
-            }
-
-            guard let messageText = text else {
-                DebugLogger.shared.log("Skipped - no text available", category: "PARSING", data: ["guid": guid])
-                return nil
-            }
-
-            return Message(
-                rowId: messageRow[ROWID],
-                guid: messageRow[guidColumn],
-                text: messageText,
-                handle: handle,
-                group: messageRow[cacheRoomnamesColumn],
-                fromMe: messageRow[fromMeColumn])
-        }
-
-        let finalMessages = messages.compactMap { $0 }
-        DebugLogger.shared.log("ROWID query complete", category: "DATABASE", data: ["rows_scanned": rowCount, "messages_found": finalMessages.count])
-
-        return finalMessages
-    }
+    // MARK: - MessageSource
 
     func startListening() {
-        // Initialize lastProcessedRowId to current max ROWID to avoid processing old messages
         initializeLastProcessedRowId()
         syncMessages()
         setupWALFileMonitor()
     }
 
-    private func initializeLastProcessedRowId() {
-        guard AppStateManager.shared.hasFullDiscAccess() == .authorized else { return }
-
-        do {
-            var homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-            homeDirectory.appendPathComponent("/Library/Messages/chat.db")
-            let db = try Connection(homeDirectory.absoluteString)
-
-            let messageTable = Table("message")
-            let ROWID = Expression<Int>("ROWID")
-
-            // Get the highest ROWID to start monitoring from
-            if let maxRow = try db.pluck(messageTable.select(ROWID).order(ROWID.desc).limit(1)) {
-                lastProcessedRowId = maxRow[ROWID]
-                DebugLogger.shared.log("Initialized lastProcessedRowId", category: "SYNC", data: ["rowId": lastProcessedRowId])
-            }
-        } catch {
-            DebugLogger.shared.log("Failed to initialize lastProcessedRowId", category: "ERROR", data: ["error": String(describing: error)])
-        }
-    }
-
     func stopListening() {
-        cleanupWALFileMonitor()
-    }
-
-    private func setupWALFileMonitor() {
-        var homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        homeDirectory.appendPathComponent("/Library/Messages/chat.db-wal")
-        let walPath = homeDirectory.path
-
-        walFileDescriptor = open(walPath, O_EVTONLY)
-        guard walFileDescriptor >= 0 else {
-            DebugLogger.shared.log("Failed to open WAL file for monitoring", category: "SYNC", data: ["path": walPath])
-            return
-        }
-
-        let queue = DispatchQueue.global(qos: .background)
-        guard let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: walFileDescriptor,
-            eventMask: [.write, .extend],
-            queue: queue
-        ) as? DispatchSourceFileSystemObject else {
-            close(walFileDescriptor)
-            walFileDescriptor = -1
-            return
-        }
-
-        source.setEventHandler { [weak self] in
-            guard let self = self else { return }
-
-            // Cancel any pending sync
-            self.syncWorkItem?.cancel()
-
-            // Create new debounced sync work item
-            let workItem = DispatchWorkItem { [weak self] in
-                DebugLogger.shared.log("WAL file changed, syncing messages (debounced)", category: "SYNC")
-                self?.syncMessages()
-            }
-
-            self.syncWorkItem = workItem
-
-            // Execute after debounce interval
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.syncDebounceInterval, execute: workItem)
-        }
-
-        source.setCancelHandler { [weak self] in
-            if let fd = self?.walFileDescriptor, fd >= 0 {
-                close(fd)
-                self?.walFileDescriptor = -1
-            }
-        }
-
-        walFileMonitor = source
-        source.resume()
-
-        DebugLogger.shared.log("WAL file monitoring started", category: "SYNC", data: ["path": walPath])
-    }
-
-    private func cleanupWALFileMonitor() {
         walFileMonitor?.cancel()
         walFileMonitor = nil
     }
@@ -456,201 +60,169 @@ class MessageManager: ObservableObject {
         startListening()
     }
 
-    deinit {
-        syncWorkItem?.cancel()
-        cleanupWALFileMonitor()
-    }
-
-    // Test/Debug method to inject fake messages
     func injectTestMessage(_ text: String) {
-        let testMessage = Message(
-            rowId: 0,
-            guid: UUID().uuidString,
-            text: text,
-            handle: "+15555551234",
-            group: nil,
-            fromMe: false
-        )
-
-        guard let parsedOTP = otpParser.parseMessage(text) else {
-            print("❌ Failed to parse test message: \(text)")
+        let message = Message(rowId: 0, guid: UUID().uuidString, text: text, handle: "+15555551234", group: nil, fromMe: false)
+        guard let parsedOTP = otpParser.parse(text) else {
+            print("Failed to parse test message: \(text)")
             return
         }
-
-        print("✅ Parsed test message: \(parsedOTP.code) from \(parsedOTP.service ?? "unknown")")
-        messages.append((testMessage, parsedOTP))
+        messages.append((message, parsedOTP))
     }
-    
-    @objc func syncMessages() {
-        // Don't try to sync if we don't have Full Disk Access
-        guard AppStateManager.shared.hasFullDiscAccess() == .authorized else {
-            DebugLogger.shared.log("syncMessages skipped - no Full Disk Access", category: "SYNC")
-            return
-        }
 
-        DebugLogger.shared.log("Starting syncMessages", category: "SYNC", data: ["lastProcessedRowId": lastProcessedRowId])
+    // MARK: - Database sync
 
+    private func initializeLastProcessedRowId() {
+        guard AppStateManager.shared.hasFullDiskAccess() == .authorized else { return }
         do {
-            let parsedOtps = try findPossibleOTPMessagesAfterRowId(lastProcessedRowId)
-            guard parsedOtps.count > 0 else {
-                DebugLogger.shared.log("No new OTP messages found", category: "SYNC")
-                return
-            }
-            messages.append(contentsOf: parsedOtps)
-            DebugLogger.shared.log("Added new OTP messages", category: "SYNC", data: ["count": parsedOtps.count])
-        } catch let err {
-            // Only log unexpected errors (not permission denied)
-            let errorString = String(describing: err)
-            if !errorString.contains("authorization denied") {
-                print("ERR: \(err)")
-                DebugLogger.shared.log("Error during sync", category: "ERROR", data: ["error": errorString])
-            }
-        }
-    }
-    
-    private func findPossibleOTPMessagesAfterRowId(_ rowId: Int) throws -> [MessageWithParsedOTP] {
-        let messagesFromDB = try loadMessagesAfterRowId(rowId)
-
-        // Update lastProcessedRowId to the highest ROWID we've seen
-        if let maxRowId = messagesFromDB.map({ $0.rowId }).max() {
-            lastProcessedRowId = maxRowId
-        }
-
-        let filteredMessages = messagesFromDB
-            .filter { !isInvalidMessageBodyValidPerCustomBlacklist($0.text) }
-            .filter { !processedGuids.contains($0.guid) }
-
-        filteredMessages.forEach { message in
-            processedGuids.insert(message.guid)
-        }
-
-        return filteredMessages.compactMap { message in
-            guard let parsedOTP = otpParser.parseMessage(message.text) else { return nil }
-            return (message, parsedOTP)
-        }
-    }
-    
-    private func isInvalidMessageBodyValidPerCustomBlacklist(_ messageBody: String) -> Bool {
-        return (
-            messageBody.isEmpty ||
-            messageBody.count < 5 ||
-            messageBody.contains("$") ||
-            messageBody.contains("€") ||
-            messageBody.contains("₹") ||
-            messageBody.contains("¥")
-        )
-    }
-
-    func markMessageAsRead(guid: String) {
-        guard AppStateManager.shared.markAsReadEnabled else {
-            DebugLogger.shared.log("Mark as read skipped - feature disabled", category: "MARK_READ")
-            return
-        }
-        guard AppStateManager.shared.hasFullDiscAccess() == .authorized else {
-            DebugLogger.shared.log("Mark as read skipped - no Full Disk Access", category: "MARK_READ")
-            return
-        }
-
-        DebugLogger.shared.log("Attempting to mark message as read", category: "MARK_READ", data: ["guid": guid])
-
-        // Method 1: Update the database directly
-        let dbSuccess = markMessageAsReadInDatabase(guid: guid)
-
-        // Method 2: Try to notify Messages app via AppleScript (more reliable for UI updates)
-        if dbSuccess {
-            notifyMessagesAppViaAppleScript()
-        }
-    }
-
-    private func markMessageAsReadInDatabase(guid: String) -> Bool {
-        do {
-            var homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-            homeDirectory.appendPathComponent("/Library/Messages/chat.db")
-            let db = try Connection(homeDirectory.absoluteString)
-
-            let messageTable = Table("message")
-            let guidColumn = Expression<String>("guid")
-            let isReadColumn = Expression<Int>("is_read")
-            let dateReadColumn = Expression<Int>("date_read")
-
-            // Get current time in Apple's epoch format (nanoseconds since 2001-01-01)
-            let currentDate = Date()
-            let dateRead = Int(currentDate.timeIntervalSinceReferenceDate * 1_000_000_000)
-
-            let message = messageTable.filter(guidColumn == guid)
-
-            // Update both is_read and date_read
-            let updateResult = try db.run(message.update(
-                isReadColumn <- 1,
-                dateReadColumn <- dateRead
-            ))
-
-            if updateResult > 0 {
-                DebugLogger.shared.log("Successfully marked message as read in database", category: "MARK_READ", data: ["guid": guid, "rows_updated": updateResult, "date_read": dateRead])
-                return true
-            } else {
-                DebugLogger.shared.log("No rows updated - message may not exist", category: "MARK_READ", data: ["guid": guid])
-                return false
+            let db = try Connection(databaseURL.absoluteString)
+            let ROWID = Expression<Int>("ROWID")
+            if let maxRow = try db.pluck(Table("message").select(ROWID).order(ROWID.desc).limit(1)) {
+                lastProcessedRowId = maxRow[ROWID]
             }
         } catch {
-            DebugLogger.shared.log("Failed to mark message as read in database", category: "MARK_READ", data: ["guid": guid, "error": String(describing: error)])
-            return false
+            DebugLogger.shared.log("Failed to initialize lastProcessedRowId", category: "ERROR", data: error)
         }
     }
 
-    private func notifyMessagesAppViaAppleScript() {
-        // The fundamental issue: Messages.app caches read status and doesn't automatically
-        // detect database changes. There are a few approaches:
-        //
-        // 1. AppleScript - Requires "Automation" permissions for Messages
-        // 2. Distributed notifications - Messages might listen to these
-        // 3. Kill and restart imagent - Too invasive
-        // 4. Wait for Messages to naturally refresh - Happens on app launch/wake
-        //
-        // Try sending a distributed notification that Messages might respond to
-        DebugLogger.shared.log("Attempting to notify Messages via distributed notification", category: "MARK_READ")
-
-        let notificationCenter = DistributedNotificationCenter.default()
-
-        // Try various notification names that Messages might listen to
-        let notificationNames = [
-            "com.apple.imdpersistence.IMDMessageStore.MessageStoreDidMarkMessagesAsRead",
-            "com.apple.imdpersistence.IMDMessageStore.MessageStoreDidChange",
-            "com.apple.MobileSMS.MarkAsRead",
-            "com.apple.messages.MarkAsRead"
-        ]
-
-        for notificationName in notificationNames {
-            notificationCenter.post(
-                name: NSNotification.Name(notificationName),
-                object: nil,
-                userInfo: nil
-            )
+    private func setupWALFileMonitor() {
+        let walPath = databaseURL.path + "-wal"
+        let descriptor = open(walPath, O_EVTONLY)
+        guard descriptor >= 0 else {
+            DebugLogger.shared.log("Failed to open WAL file for monitoring", category: "SYNC", data: walPath)
+            return
         }
 
-        DebugLogger.shared.log("Distributed notifications sent", category: "MARK_READ", data: ["notifications": notificationNames])
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor, eventMask: [.write, .extend], queue: .global(qos: .background))
 
-        // Also try a simple AppleScript that doesn't require automation permissions
-        // Just check if Messages is running - this shouldn't require special permissions
-        let simpleScript = """
-        tell application "System Events"
-            set messagesRunning to exists (processes where name is "Messages")
-            if messagesRunning then
-                return "Messages is running"
-            else
-                return "Messages is not running"
-            end if
-        end tell
-        """
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.syncWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in self?.syncMessages() }
+            self.syncWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.syncDebounceInterval, execute: workItem)
+        }
+        source.setCancelHandler { close(descriptor) }
 
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: simpleScript) {
-            let output = scriptObject.executeAndReturnError(&error)
-            if let error = error {
-                DebugLogger.shared.log("AppleScript check failed", category: "MARK_READ", data: ["error": error])
-            } else {
-                DebugLogger.shared.log("Messages app status check", category: "MARK_READ", data: ["status": output.stringValue ?? "unknown"])
+        walFileMonitor = source
+        source.resume()
+    }
+
+    @objc func syncMessages() {
+        guard AppStateManager.shared.hasFullDiskAccess() == .authorized else { return }
+        do {
+            let newMessages = try loadMessagesAfterRowId(lastProcessedRowId)
+            if let maxRowId = newMessages.map(\.rowId).max() {
+                lastProcessedRowId = maxRowId
             }
+
+            let parsed = newMessages
+                .filter { !Self.isBlacklisted($0.text) && !processedGuids.contains($0.guid) }
+                .compactMap { message -> MessageWithParsedOTP? in
+                    processedGuids.insert(message.guid)
+                    guard let otp = otpParser.parse(message.text, sender: message.handle) else { return nil }
+                    return (message, otp)
+                }
+
+            guard !parsed.isEmpty else { return }
+            DispatchQueue.main.async { self.messages.append(contentsOf: parsed) }
+            DebugLogger.shared.log("Added new OTP messages", category: "SYNC", data: parsed.count)
+        } catch {
+            let description = String(describing: error)
+            if !description.contains("authorization denied") {
+                DebugLogger.shared.log("Error during sync", category: "ERROR", data: description)
+            }
+        }
+    }
+
+    private func loadMessagesAfterRowId(_ rowId: Int) throws -> [Message] {
+        let db = try Connection(databaseURL.absoluteString)
+
+        let textColumn = Expression<String?>("text")
+        let attributedBodyColumn = Expression<Data?>("attributedBody")
+        let guidColumn = Expression<String>("guid")
+        let cacheRoomnamesColumn = Expression<String?>("cache_roomnames")
+        let fromMeColumn = Expression<Bool>("is_from_me")
+        let ROWID = Expression<Int>("ROWID")
+
+        let handleTable = Table("handle")
+        let handleFrom = handleTable[Expression<String?>("id")]
+        let messageTable = Table("message")
+
+        let query = messageTable
+            .select(messageTable[guidColumn], messageTable[fromMeColumn], messageTable[textColumn],
+                    messageTable[attributedBodyColumn], messageTable[cacheRoomnamesColumn],
+                    messageTable[ROWID], handleFrom)
+            .join(.leftOuter, handleTable, on: messageTable[Expression<Int>("handle_id")] == handleTable[ROWID])
+            .where(messageTable[ROWID] > rowId)
+            .order(messageTable[ROWID].asc)
+            .limit(100)
+
+        return try db.prepareRowIterator(query).map { row -> Message? in
+            guard let handle = row[handleFrom],
+                  let text = row[textColumn] ?? Self.parseAttributedBody(row[attributedBodyColumn]) else { return nil }
+            return Message(
+                rowId: row[ROWID],
+                guid: row[guidColumn],
+                text: text,
+                handle: handle,
+                group: row[cacheRoomnamesColumn],
+                fromMe: row[fromMeColumn])
+        }.compactMap { $0 }
+    }
+
+    /// Messages with money amounts or nearly no text are never OTPs.
+    private static func isBlacklisted(_ text: String) -> Bool {
+        text.count < 5 || ["$", "€", "₹", "¥"].contains(where: text.contains)
+    }
+
+    /// On newer macOS versions `text` is often NULL and the content lives in
+    /// `attributedBody` as an archived NSAttributedString.
+    private static func parseAttributedBody(_ data: Data?) -> String? {
+        guard let data else { return nil }
+
+        if let attributed = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data),
+           !attributed.string.isEmpty {
+            return attributed.string
+        }
+
+        // Fallback: scan the raw streamtyped bytes. The message text sits between
+        // an "NSString" marker (+8 bytes) and an "NSDictionary" marker (-10 bytes).
+        var body = String(decoding: data, as: UTF8.self)
+        guard let nsStringRange = body.range(of: "NSString") else { return nil }
+        let start = body.index(nsStringRange.upperBound, offsetBy: 8, limitedBy: body.endIndex) ?? body.endIndex
+        body = String(body[start...])
+        if let nsDictionaryRange = body.range(of: "NSDictionary") {
+            let end = body.index(nsDictionaryRange.lowerBound, offsetBy: -10, limitedBy: body.startIndex)
+                ?? nsDictionaryRange.lowerBound
+            body = String(body[..<end])
+        }
+        let cleaned = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    // MARK: - Mark as read
+
+    func markMessageAsRead(guid: String) {
+        guard AppStateManager.shared.markAsReadEnabled,
+              AppStateManager.shared.hasFullDiskAccess() == .authorized else { return }
+
+        do {
+            let db = try Connection(databaseURL.absoluteString)
+            let message = Table("message").filter(Expression<String>("guid") == guid)
+            let dateRead = Int(Date().timeIntervalSinceReferenceDate * 1_000_000_000)
+            let updated = try db.run(message.update(
+                Expression<Int>("is_read") <- 1,
+                Expression<Int>("date_read") <- dateRead))
+            guard updated > 0 else { return }
+
+            // Nudge Messages.app to refresh its cached read state.
+            for name in ["com.apple.imdpersistence.IMDMessageStore.MessageStoreDidMarkMessagesAsRead",
+                         "com.apple.imdpersistence.IMDMessageStore.MessageStoreDidChange"] {
+                DistributedNotificationCenter.default().post(name: NSNotification.Name(name), object: nil)
+            }
+        } catch {
+            DebugLogger.shared.log("Failed to mark message as read", category: "ERROR", data: error)
         }
     }
 }

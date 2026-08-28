@@ -12,25 +12,18 @@
 		0F296FA52EF8BA8600D82E5A /* GoogleMessagesManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F296FA42EF8BA8600D82E5A /* GoogleMessagesManager.swift */; };
 		0F296FB42EF8D0A000D82E5A /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0F296FB32EF8D0A000D82E5A /* AppIcon.icon */; };
 		0F4964342E9FE42F009D1F5E /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4964332E9FE42F009D1F5E /* OnboardingView.swift */; };
-		0F4964362E9FECAC009D1F5E /* SimpleOTPParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4964352E9FECAC009D1F5E /* SimpleOTPParser.swift */; };
 		0FB533F92EA81F1E00BD67DF /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB533F82EA81F1E00BD67DF /* DebugLogger.swift */; };
-		6547376E29B8973800523B18 /* Permission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6547376D29B8973800523B18 /* Permission.swift */; };
-		D4123A7628261377002C3C42 /* UIConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4123A7528261377002C3C42 /* UIConstants.swift */; };
 		D4123A7F2826EF3B002C3C42 /* TwoFHeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4123A7E2826EF3B002C3C42 /* TwoFHeyTests.swift */; };
 		D41FABD828177D7F00B0F829 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D41FABD728177D7F00B0F829 /* WebKit.framework */; };
 		D4331327281F5D3500AC5343 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = D4331326281F5D3500AC5343 /* SQLite */; };
 		D433132F281F630400AC5343 /* AutoLauncherAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D433132E281F630400AC5343 /* AutoLauncherAppDelegate.swift */; };
 		D4331341281F655900AC5343 /* ServiceManagement.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4331340281F655900AC5343 /* ServiceManagement.framework */; };
 		D4331344281F6B6700AC5343 /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = D4331343281F6B6700AC5343 /* HotKey */; };
-		D479A3E02821E74500915AAA /* CustomOTPParsers.swift in Sources */ = {isa = PBXBuildFile; fileRef = D479A3DF2821E74500915AAA /* CustomOTPParsers.swift */; };
-		D479A3E22821EE2600915AAA /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = D479A3E12821EE2600915AAA /* Extensions.swift */; };
 		D4AF833B2825FE400034A7BE /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = D41FABE428178CDB00B0F829 /* main.swift */; };
 		D4AF833D2825FFFA0034A7BE /* AutoLauncher.app in Copy Files */ = {isa = PBXBuildFile; fileRef = D433132C281F630400AC5343 /* AutoLauncher.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D4AF833F2826018D0034A7BE /* Main.xib in Resources */ = {isa = PBXBuildFile; fileRef = D4AF833E2826018D0034A7BE /* Main.xib */; };
 		D4F5CAA02817688800A39E6D /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F5CA9F2817688800A39E6D /* AppDelegate.swift */; };
 		D4F5CAA42817688900A39E6D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4F5CAA32817688900A39E6D /* Assets.xcassets */; };
-		D4F5CAB2281768B000A39E6D /* OTPParserContants.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F5CAAF281768B000A39E6D /* OTPParserContants.swift */; };
-		D4F5CAB3281768B000A39E6D /* CustomOTPParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F5CAB0281768B000A39E6D /* CustomOTPParser.swift */; };
 		D4F5CAB4281768B000A39E6D /* OTPParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F5CAB1281768B000A39E6D /* OTPParser.swift */; };
 		D4F5CAB8281768C500A39E6D /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F5CAB6281768C500A39E6D /* OverlayView.swift */; };
 		D4F5CABC281768E100A39E6D /* Message.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F5CABB281768E100A39E6D /* Message.swift */; };
@@ -68,10 +61,7 @@
 		0F296FA42EF8BA8600D82E5A /* GoogleMessagesManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleMessagesManager.swift; sourceTree = "<group>"; };
 		0F296FB32EF8D0A000D82E5A /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		0F4964332E9FE42F009D1F5E /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
-		0F4964352E9FECAC009D1F5E /* SimpleOTPParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleOTPParser.swift; sourceTree = "<group>"; };
 		0FB533F82EA81F1E00BD67DF /* DebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogger.swift; sourceTree = "<group>"; };
-		6547376D29B8973800523B18 /* Permission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Permission.swift; sourceTree = "<group>"; };
-		D4123A7528261377002C3C42 /* UIConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIConstants.swift; sourceTree = "<group>"; };
 		D4123A7C2826EF3B002C3C42 /* TwoFHeyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TwoFHeyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D4123A7E2826EF3B002C3C42 /* TwoFHeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwoFHeyTests.swift; sourceTree = "<group>"; };
 		D41FABD728177D7F00B0F829 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
@@ -81,16 +71,12 @@
 		D4331337281F630600AC5343 /* AutoLauncher.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AutoLauncher.entitlements; sourceTree = "<group>"; };
 		D433133B281F639800AC5343 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D4331340281F655900AC5343 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
-		D479A3DF2821E74500915AAA /* CustomOTPParsers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomOTPParsers.swift; sourceTree = "<group>"; };
-		D479A3E12821EE2600915AAA /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		D4AF833C2825FEE70034A7BE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D4AF833E2826018D0034A7BE /* Main.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = Main.xib; sourceTree = "<group>"; };
 		D4F5CA9C2817688800A39E6D /* 2FHey.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = 2FHey.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D4F5CA9F2817688800A39E6D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		D4F5CAA32817688900A39E6D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D4F5CAA82817688900A39E6D /* TwoFHey.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TwoFHey.entitlements; sourceTree = "<group>"; };
-		D4F5CAAF281768B000A39E6D /* OTPParserContants.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OTPParserContants.swift; sourceTree = "<group>"; };
-		D4F5CAB0281768B000A39E6D /* CustomOTPParser.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CustomOTPParser.swift; sourceTree = "<group>"; };
 		D4F5CAB1281768B000A39E6D /* OTPParser.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OTPParser.swift; sourceTree = "<group>"; };
 		D4F5CAB6281768C500A39E6D /* OverlayView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
 		D4F5CABB281768E100A39E6D /* Message.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
@@ -206,11 +192,9 @@
 				D4F5CAB5281768BE00A39E6D /* Views */,
 				D4F5CAAE281768A100A39E6D /* OTPParser */,
 				D4F5CA9F2817688800A39E6D /* AppDelegate.swift */,
-				6547376D29B8973800523B18 /* Permission.swift */,
 				D4F5CAA32817688900A39E6D /* Assets.xcassets */,
 				D4F5CAA82817688900A39E6D /* TwoFHey.entitlements */,
 				D41FABE428178CDB00B0F829 /* main.swift */,
-				D4123A7528261377002C3C42 /* UIConstants.swift */,
 			);
 			path = TwoFHey;
 			sourceTree = "<group>";
@@ -218,12 +202,7 @@
 		D4F5CAAE281768A100A39E6D /* OTPParser */ = {
 			isa = PBXGroup;
 			children = (
-				D4F5CAB0281768B000A39E6D /* CustomOTPParser.swift */,
 				D4F5CAB1281768B000A39E6D /* OTPParser.swift */,
-				0F4964352E9FECAC009D1F5E /* SimpleOTPParser.swift */,
-				D4F5CAAF281768B000A39E6D /* OTPParserContants.swift */,
-				D479A3DF2821E74500915AAA /* CustomOTPParsers.swift */,
-				D479A3E12821EE2600915AAA /* Extensions.swift */,
 			);
 			path = OTPParser;
 			sourceTree = "<group>";
@@ -432,22 +411,15 @@
 				D4F5CABE281768EC00A39E6D /* MessageManager.swift in Sources */,
 				0FB533F92EA81F1E00BD67DF /* DebugLogger.swift in Sources */,
 				D4F5CAB4281768B000A39E6D /* OTPParser.swift in Sources */,
-				D4123A7628261377002C3C42 /* UIConstants.swift in Sources */,
-				0F4964362E9FECAC009D1F5E /* SimpleOTPParser.swift in Sources */,
 				0F296FA52EF8BA8600D82E5A /* GoogleMessagesManager.swift in Sources */,
 				D4F5CAC32817725100A39E6D /* AppStateManager.swift in Sources */,
-				D479A3E02821E74500915AAA /* CustomOTPParsers.swift in Sources */,
 				0F296FA22EF8BA7A00D82E5A /* PlatformSelectionView.swift in Sources */,
 				0F296FA32EF8BA7A00D82E5A /* GoogleMessagesSetupView.swift in Sources */,
-				D4F5CAB2281768B000A39E6D /* OTPParserContants.swift in Sources */,
 				D4AF833B2825FE400034A7BE /* main.swift in Sources */,
 				D4F5CAB8281768C500A39E6D /* OverlayView.swift in Sources */,
-				D479A3E22821EE2600915AAA /* Extensions.swift in Sources */,
 				D4F5CAA02817688800A39E6D /* AppDelegate.swift in Sources */,
 				D4F5CABC281768E100A39E6D /* Message.swift in Sources */,
-				6547376E29B8973800523B18 /* Permission.swift in Sources */,
 				0F4964342E9FE42F009D1F5E /* OnboardingView.swift in Sources */,
-				D4F5CAB3281768B000A39E6D /* CustomOTPParser.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -472,6 +444,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2H66PPM438;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.4;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sofriendly.2fhey.TwoFHeyTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -492,6 +465,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2H66PPM438;
 				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.4;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sofriendly.2fhey.TwoFHeyTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -713,7 +687,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.4;
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sofriendly.2fhey;
 				PRODUCT_NAME = 2FHey;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -748,7 +722,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.4;
-				MARKETING_VERSION = 2.1;
+				MARKETING_VERSION = 3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sofriendly.2fhey;
 				PRODUCT_NAME = 2FHey;
 				PROVISIONING_PROFILE_SPECIFIER = "";

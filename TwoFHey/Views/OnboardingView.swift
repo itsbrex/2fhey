@@ -88,7 +88,7 @@ struct IMessagePermissionsView: View {
                     description: "Required for auto-paste and keyboard shortcuts",
                     status: viewModel.hasAccessibility ? .granted : .needed,
                     action: {
-                        PermissionsService.acquireAccessibilityPrivileges()
+                        AppStateManager.acquireAccessibilityPrivileges()
                     }
                 )
 
@@ -259,7 +259,7 @@ class OnboardingViewModel: ObservableObject {
 
     private func checkPermissions() {
         hasAccessibility = AppStateManager.shared.hasAccessibilityPermission()
-        hasFullDiskAccess = AppStateManager.shared.hasFullDiscAccess() == .authorized
+        hasFullDiskAccess = AppStateManager.shared.hasFullDiskAccess() == .authorized
     }
 }
 
